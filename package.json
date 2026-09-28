@@ -1,0 +1,22 @@
+{
+  "name": "yibra-desktop",
+  "productName": "Yibra",
+  "version": "0.1.0",
+  "description": "Yibra desktop client - the squad voice app, now with a system tray.",
+  "main": "src/main.js",
+  "private": true,
+  "author": "Rayza73",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "electron .",
+    "start:dev": "electron . --yibra-dev"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron"
+    ]
+  },
+  "devDependencies": {
+    "electron": "^44.4.5"
+  }
+}
