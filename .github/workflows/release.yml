@@ -4,6 +4,10 @@
 #   pnpm version patch     # bumps package.json + creates tag v0.3.1
 #   git push --follow-tags # push the commit AND the tag -> this workflow runs
 #
+# Flow: build -> upload everything to a DRAFT release -> verify all three
+# update files are attached -> publish. A half-uploaded release can never go
+# live (v0.3.0 went live with only the blockmap - never again).
+#
 # Uses the built-in GITHUB_TOKEN, so no personal access token anywhere.
 
 name: Release
@@ -20,9 +24,13 @@ jobs:
   build-windows:
     runs-on: windows-latest
 
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ github.ref_name }}
+
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
@@ -30,7 +38,7 @@ jobs:
           version: 10
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: pnpm
@@ -39,7 +47,7 @@ jobs:
         shell: pwsh
         run: |
           $pkg = (Get-Content package.json -Raw | ConvertFrom-Json).version
-          $tag = "${{ github.ref_name }}".TrimStart('v')
+          $tag = "$env:TAG".TrimStart('v')
           if ($pkg -ne $tag) {
             Write-Error "Tag v$tag does not match package.json version $pkg. Use 'pnpm version patch' to bump both together."
             exit 1
@@ -49,7 +57,25 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build installer and publish release
+      - name: Build installer and upload to draft release
         run: pnpm run release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Show what was built
+        shell: pwsh
+        run: Get-ChildItem dist -File | Format-Table Name, Length
+
+      - name: Verify draft has all update files
+        shell: pwsh
+        run: |
+          $required = @('Yibra-Setup.exe', 'Yibra-Setup.exe.blockmap', 'latest.yml')
+          $assets = (gh release view $env:TAG --json assets | ConvertFrom-Json).assets
+          $assets | Format-Table name, size, state
+          $missing = $required | Where-Object { $_ -notin $assets.name }
+          if ($missing) {
+            Write-Error "Release $env:TAG is missing: $($missing -join ', '). Not publishing."
+            exit 1
+          }
+          Write-Host "All update files present."
+
+      - name: Publish release
+        run: gh release edit ${{ github.ref_name }} --draft=false --latest

@@ -68,7 +68,7 @@
         "provider": "github",
         "owner": "Rayza73",
         "repo": "yibra-desktop",
-        "releaseType": "release"
+        "releaseType": "draft"
       }
     ]
   },

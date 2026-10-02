@@ -5,10 +5,12 @@ How a new version gets from your PC onto everyone's machine.
 ## How auto-update works
 
 1. A version tag (e.g. `v0.3.1`) is pushed to GitHub.
-2. The **Release** GitHub Action (`.github/workflows/release.yml`) builds the installer on a Windows runner and publishes a GitHub Release with:
+2. The **Release** GitHub Action (`.github/workflows/release.yml`) builds the installer on a Windows runner and uploads it to a **draft** release containing:
    - `Yibra-Setup.exe`: the installer
    - `Yibra-Setup.exe.blockmap`: lets the updater download only the changed chunks
    - `latest.yml`: the manifest installed apps read to see what's newest
+
+   The Action then checks that all three files are attached, and only then publishes the draft. A missing file turns the job red, so a half-uploaded release never goes live.
 3. Every installed Yibra checks `latest.yml` **10 seconds after launch and every 4 hours**. Updates download quietly in the background.
 4. When the download is done, a Windows toast and a tray item say **"Restart to update (vX)"**.
    - Clicking either one restarts Yibra on the new version.
@@ -57,6 +59,8 @@ pnpm dist     # installer in dist\, NOT published
 4. A toast should say v0.3.1 is ready. Click it, and Yibra restarts as v0.3.1 (check the version label at the top of the tray menu).
 
 ## Gotchas
+
+- **A green job used to be no guarantee (v0.3.0).** The original workflow published the release immediately, and only the `.blockmap` got uploaded. The exe and `latest.yml` silently went missing while the job still showed green. The likely culprit is GitHub locking assets once a release is published (immutable releases), but it was never confirmed. Fixed in v0.3.1 by switching to draft, then verify, then publish.
 
 - **Updates only run in the installed app.** `pnpm start` skips the updater entirely because there's no update feed in dev.
 - **Never delete a published release's `latest.yml`.** Clients would get confused. To pull a bad release, publish a newer fixed one instead.
