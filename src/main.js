@@ -1,13 +1,14 @@
-// Yibra Desktop - prototype v0.1
+// Yibra Desktop
 // A thin Electron shell around the live Yibra web app, plus the OS-level
 // bits a browser tab can't do: system tray, close-to-tray, global hotkey,
 // no background throttling (voice keeps flowing when minimised), and
-// sound autoplay without a click first.
+// sound autoplay without a click first. Updates itself from GitHub Releases.
 
 const {
   app, BrowserWindow, Tray, Menu, nativeImage, shell, session,
-  globalShortcut, ipcMain,
+  globalShortcut, ipcMain, Notification,
 } = require('electron');
+const { autoUpdater } = require('electron-updater');
 const path = require('node:path');
 const fs = require('node:fs');
 
@@ -37,6 +38,9 @@ const ALLOWED_PERMISSIONS = new Set([
 ]);
 
 const TOGGLE_HOTKEY = 'CommandOrControl+Shift+Y';
+
+// Launched by Windows at login -> start quietly in the tray
+const START_HIDDEN = process.argv.includes('--hidden');
 const PARTITION = 'persist:yibra'; // keeps the Laravel session cookie between launches
 
 // Let notification sounds play without the user clicking first.
@@ -126,8 +130,11 @@ function createWindow() {
     },
   });
 
-  if (state.maximized) mainWindow.maximize();
-  mainWindow.once('ready-to-show', () => mainWindow.show());
+  mainWindow.once('ready-to-show', () => {
+    if (START_HIDDEN) return; // stay in the tray until summoned
+    if (state.maximized) mainWindow.maximize();
+    mainWindow.show();
+  });
 
   mainWindow.loadURL(START_URL);
 
@@ -205,18 +212,166 @@ function createTray() {
   if (icon.isEmpty()) icon = nativeImage.createFromPath(asset('icon.png'));
   tray = new Tray(icon.resize({ width: 16, height: 16 }));
   tray.setToolTip(USE_DEV ? 'Yibra (DEV)' : 'Yibra');
+  buildTrayMenu();
+  tray.on('click', toggleWindow);
+}
+
+// Rebuilt whenever update state changes, so the menu can offer a restart.
+function buildTrayMenu() {
+  if (!tray) return;
+
+  const updateItems = [];
+  if (updateState.downloaded) {
+    updateItems.push({
+      label: `Restart to update (v${updateState.version})`,
+      click: installUpdateNow,
+    });
+  } else if (updateState.downloading) {
+    updateItems.push({ label: `Downloading update ${updateState.progress}%...`, enabled: false });
+  } else {
+    updateItems.push({
+      label: updateState.checking ? 'Checking for updates...' : 'Check for updates',
+      enabled: app.isPackaged && !updateState.checking,
+      click: () => checkForUpdates({ manual: true }),
+    });
+  }
 
   tray.setContextMenu(Menu.buildFromTemplate([
+    { label: `Yibra v${app.getVersion()}${USE_DEV ? ' (DEV)' : ''}`, enabled: false },
+    { type: 'separator' },
     { label: 'Open Yibra', click: showWindow },
     { label: 'Reload', click: () => mainWindow?.webContents.reload() },
     { type: 'separator' },
     { label: `Toggle window: ${TOGGLE_HOTKEY.replace('CommandOrControl', 'Ctrl')}`, enabled: false },
+    {
+      label: 'Start with Windows',
+      type: 'checkbox',
+      // Only makes sense for the installed app - in dev it would register electron.exe
+      enabled: app.isPackaged,
+      checked: app.isPackaged && app.getLoginItemSettings({ args: ['--hidden'] }).openAtLogin, // Windows matches on args too
+      click: (item) => app.setLoginItemSettings({
+        openAtLogin: item.checked,
+        args: ['--hidden'],
+      }),
+    },
     { label: 'Developer tools', click: () => mainWindow?.webContents.toggleDevTools() },
+    { type: 'separator' },
+    ...updateItems,
     { type: 'separator' },
     { label: 'Quit Yibra', click: () => { app.isQuitting = true; app.quit(); } },
   ]));
+}
 
-  tray.on('click', toggleWindow);
+// ---------------------------------------------------------------------------
+// Auto-update (GitHub Releases on Rayza73/yibra-desktop, public repo, no token)
+// ---------------------------------------------------------------------------
+// Flow: check on launch + every few hours -> download quietly in the background
+// -> toast + tray item "Restart to update". If nobody clicks it, the update
+// installs the next time Yibra actually quits (not just hides to tray).
+const UPDATE_CHECK_EVERY_MS = 4 * 60 * 60 * 1000; // 4 hours
+const UPDATE_FIRST_CHECK_DELAY_MS = 10 * 1000;    // let the window settle first
+
+const updateState = {
+  checking: false,
+  downloading: false,
+  downloaded: false,
+  progress: 0,
+  version: null,
+  manual: false, // user clicked "Check for updates" -> tell them the result
+};
+
+function notify(title, body, onClick) {
+  if (!Notification.isSupported()) return;
+  const n = new Notification({ title, body, icon: asset('icon.png'), silent: false });
+  if (onClick) n.on('click', onClick);
+  n.show();
+}
+
+function checkForUpdates({ manual = false } = {}) {
+  if (!app.isPackaged) return; // dev runs have no update feed (no app-update.yml)
+  if (updateState.checking || updateState.downloading || updateState.downloaded) return;
+  updateState.manual = manual;
+  autoUpdater.checkForUpdates().catch((err) => {
+    console.warn('[yibra] update check failed:', err?.message || err);
+  });
+}
+
+function installUpdateNow() {
+  // Our close handler hides to tray unless we're quitting - so flag it first,
+  // otherwise the installer waits forever for a window that never closes.
+  app.isQuitting = true;
+  saveWindowState(mainWindow);
+  // isSilent = true (one-click NSIS, no wizard), isForceRunAfter = true (relaunch)
+  autoUpdater.quitAndInstall(true, true);
+}
+
+function setupAutoUpdater() {
+  if (!app.isPackaged) return;
+
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.allowPrerelease = false;
+  autoUpdater.logger = console;
+
+  autoUpdater.on('checking-for-update', () => {
+    updateState.checking = true;
+    buildTrayMenu();
+  });
+
+  autoUpdater.on('update-not-available', () => {
+    updateState.checking = false;
+    buildTrayMenu();
+    if (updateState.manual) {
+      notify('Yibra is up to date', `You're on the latest version (v${app.getVersion()}).`);
+    }
+  });
+
+  autoUpdater.on('update-available', (info) => {
+    updateState.checking = false;
+    updateState.downloading = true;
+    updateState.progress = 0;
+    updateState.version = info.version;
+    buildTrayMenu();
+    if (updateState.manual) {
+      notify('Yibra update found', `Downloading v${info.version} in the background...`);
+    }
+  });
+
+  autoUpdater.on('download-progress', (p) => {
+    const pct = Math.floor(p.percent || 0);
+    // Only rebuild the menu every 10% - no need to spam it
+    if (pct - updateState.progress >= 10) {
+      updateState.progress = pct;
+      buildTrayMenu();
+    }
+  });
+
+  autoUpdater.on('update-downloaded', (info) => {
+    updateState.downloading = false;
+    updateState.downloaded = true;
+    updateState.version = info.version;
+    buildTrayMenu();
+    tray?.setToolTip(`Yibra - update v${info.version} ready`);
+    notify(
+      `Yibra v${info.version} is ready`,
+      'Click here (or use the tray menu) to restart and update. Otherwise it installs next time you quit.',
+      installUpdateNow,
+    );
+  });
+
+  autoUpdater.on('error', (err) => {
+    console.warn('[yibra] updater error:', err?.message || err);
+    const wasManual = updateState.manual;
+    updateState.checking = false;
+    updateState.downloading = false;
+    buildTrayMenu();
+    if (wasManual) {
+      notify('Update check failed', 'Could not reach the update server. Try again later.');
+    }
+  });
+
+  setTimeout(() => checkForUpdates(), UPDATE_FIRST_CHECK_DELAY_MS);
+  setInterval(() => checkForUpdates(), UPDATE_CHECK_EVERY_MS);
 }
 
 // ---------------------------------------------------------------------------
@@ -259,6 +414,7 @@ if (!app.requestSingleInstanceLock()) {
     configureSession();
     createWindow();
     createTray();
+    setupAutoUpdater();
 
     if (!globalShortcut.register(TOGGLE_HOTKEY, toggleWindow)) {
       console.warn(`[yibra] could not register ${TOGGLE_HOTKEY} - something else owns it`);
