@@ -1,7 +1,7 @@
 {
   "name": "yibra-desktop",
   "productName": "Yibra",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Yibra desktop client - the squad voice app, with tray, hotkey and auto-updates.",
   "main": "src/main.js",
   "private": true,
