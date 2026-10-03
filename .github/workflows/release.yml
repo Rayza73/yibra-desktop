@@ -4,9 +4,9 @@
 #   pnpm version patch     # bumps package.json + creates tag v0.3.1
 #   git push --follow-tags # push the commit AND the tag -> this workflow runs
 #
-# Flow: build -> upload everything to a DRAFT release -> verify all three
-# update files are attached -> publish. A half-uploaded release can never go
-# live (v0.3.0 went live with only the blockmap - never again).
+# Flow: electron-builder builds (no publishing) -> gh uploads everything to a
+# DRAFT release -> verify all three update files are attached -> publish.
+# A half-uploaded release can never go live.
 #
 # Uses the built-in GITHUB_TOKEN, so no personal access token anywhere.
 
@@ -57,12 +57,28 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build installer and upload to draft release
-        run: pnpm run release
+      # electron-builder only BUILDS here. Its own GitHub uploader raced itself
+      # (two publishers -> two releases, exe on one, blockmap on the other), so
+      # uploading is done by the gh CLI instead. latest.yml + the app's update
+      # feed config still come from the "publish" block in package.json.
+      - name: Build installer
+        run: pnpm run dist
 
       - name: Show what was built
         shell: pwsh
         run: Get-ChildItem dist -File | Format-Table Name, Length
+
+      - name: Upload to draft release
+        shell: pwsh
+        run: |
+          gh release create $env:TAG `
+            dist/Yibra-Setup.exe `
+            dist/Yibra-Setup.exe.blockmap `
+            dist/latest.yml `
+            --draft `
+            --title "Yibra $env:TAG" `
+            --generate-notes
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Verify draft has all update files
         shell: pwsh
