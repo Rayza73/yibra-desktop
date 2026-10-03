@@ -10,6 +10,8 @@ How a new version gets from your PC onto everyone's machine.
    - `Yibra-Setup.exe.blockmap`: lets the updater download only the changed chunks
    - `latest.yml`: the manifest installed apps read to see what's newest
 
+   The Action then checks that all three files are attached (retrying for up to a minute), and only then publishes the draft. A missing file turns the job red, so a half-uploaded release never goes live.
+
    The Action then checks that all three files are attached, and only then publishes the draft. A missing file turns the job red, so a half-uploaded release never goes live.
 3. Every installed Yibra checks `latest.yml` **10 seconds after launch and every 4 hours**. Updates download quietly in the background.
 4. When the download is done, a Windows toast and a tray item say **"Restart to update (vX)"**.
@@ -29,6 +31,7 @@ git push --follow-tags      # pushes commit + tag, the Action does the rest
 ```
 
 - Use `pnpm version minor` for bigger releases (0.3.x to 0.4.0).
+- **Never click GitHub's "Create release" / "Draft a new release" button.** The Action creates the release. A hand-made one with the same tag makes the Action fail (this happened on v0.3.2).
 - Watch the build under the repo's **Actions** tab. It takes about 3-5 minutes.
 - When it goes green, the release is live and every client updates within 4 hours, or straight away on next launch.
 
@@ -53,20 +56,25 @@ Don't use `pnpm release`: it's electron-builder's own uploader, which has the ra
 
 ## Testing the update loop
 
-1. Install a released version (e.g. v0.3.2) from the Releases page.
-2. Cut the next release (v0.3.3) as above.
-3. Launch the installed v0.3.2 and wait ~10 seconds, or use tray > **Check for updates**.
-4. A toast should say v0.3.3 is ready. Click it, and Yibra restarts as v0.3.3 (check the version label at the top of the tray menu).
+1. Install a released version (e.g. v0.3.4) from the Releases page.
+2. Cut the next release (v0.3.5) as above.
+3. Launch the installed v0.3.4 and wait ~10 seconds, or use tray > **Check for updates**.
+4. A toast should say v0.3.5 is ready. Click it, and Yibra restarts as v0.3.5 (check the version label at the top of the tray menu).
 
 ## Gotchas
 
-- **Don't let electron-builder upload (v0.3.0 and v0.3.1 were broken).** With `--publish always`, electron-builder 26.15.3 started two GitHub publishers at once. Both saw "release doesn't exist" and both created one, so the blockmap landed on one release and the exe on another. The build step then exited before the 111 MB exe upload finished, and `latest.yml` never got uploaded. v0.3.0 still went green with only the blockmap. v0.3.1 was caught by the new verify step and stayed a draft.
-  - It was not immutable releases, which is off in the repo settings.
-  - Fix (v0.3.2): electron-builder now only builds (`pnpm run dist`, `--publish never`), and `gh release create` uploads all three files to one draft. The verify step then checks them before publishing.
+- **Don't let electron-builder upload. It races itself (v0.3.0 to v0.3.3).** With `--publish always`, electron-builder 26.15.3 starts two GitHub publishers at once. Both see "release doesn't exist" and both create one, so the files get split randomly between two releases, and the build step can exit before the uploads finish.
+  - v0.3.0: went live (green!) with only the blockmap.
+  - v0.3.1: the new verify step caught it, and it stayed a draft.
+  - v0.3.2: went green by luck, with all files landing on the same release. It also failed once first, because a release with that tag was made by hand.
+  - v0.3.3: exe and `latest.yml` on one release, blockmap on the other. Verify caught it.
+  - It was **not** immutable releases (off in repo settings), and not GitHub lagging.
+  - The first gh-based fix was written but never committed (only `RELEASING.md` made it into that commit), so v0.3.2 and v0.3.3 still ran the old uploader. Lesson: check the workflow file on GitHub before tagging.
+  - Fix (v0.3.4): electron-builder only builds (`pnpm run dist`, `--publish never`). `gh release create` uploads all three files to one draft (or `gh release upload --clobber` on a re-run), the verify step retries for up to a minute, then it publishes.
   - The `publish` block in `package.json` is still needed: it's what generates `latest.yml` and bakes the update feed (`app-update.yml`) into the app.
 - **Updates only run in the installed app.** `pnpm start` skips the updater entirely because there's no update feed in dev.
 - **Never delete a published release's `latest.yml`.** Clients would get confused. To pull a bad release, publish a newer fixed one instead.
 - **Don't reuse a version number.** Bump it, always.
 - **SmartScreen** still warns on first install because the exe isn't code-signed. Auto-updates aren't affected because they don't go through SmartScreen.
-- **The v0.2.0 installer has no updater**, so anyone on v0.2.0 must install v0.3.2+ manually once (v0.3.0 and v0.3.1 were broken releases, so skip them). After that it's automatic.
+- **The v0.2.0 installer has no updater**, so anyone on v0.2.0 must install v0.3.2 or later manually once (v0.3.0, v0.3.1 and v0.3.3 were broken releases, so skip those). After that it's automatic.
 - **Lockfile:** CI runs `pnpm install --frozen-lockfile`, so after changing dependencies, commit the updated `pnpm-lock.yaml` or the build fails.

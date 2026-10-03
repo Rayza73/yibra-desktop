@@ -57,10 +57,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # electron-builder only BUILDS here. Its own GitHub uploader raced itself
-      # (two publishers -> two releases, exe on one, blockmap on the other), so
-      # uploading is done by the gh CLI instead. latest.yml + the app's update
-      # feed config still come from the "publish" block in package.json.
+      # electron-builder only BUILDS here. Its own GitHub uploader races itself
+      # (two publishers -> two releases, files split between them), so the
+      # gh CLI does the uploading. latest.yml + the app's update feed config
+      # still come from the "publish" block in package.json.
       - name: Build installer
         run: pnpm run dist
 
@@ -68,25 +68,33 @@ jobs:
         shell: pwsh
         run: Get-ChildItem dist -File | Format-Table Name, Length
 
+      # Creates the draft, or reuses it if this is a re-run of a failed job.
       - name: Upload to draft release
         shell: pwsh
         run: |
-          gh release create $env:TAG `
-            dist/Yibra-Setup.exe `
-            dist/Yibra-Setup.exe.blockmap `
-            dist/latest.yml `
-            --draft `
-            --title "Yibra $env:TAG" `
-            --generate-notes
+          $files = @('dist/Yibra-Setup.exe', 'dist/Yibra-Setup.exe.blockmap', 'dist/latest.yml')
+          gh release view $env:TAG *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Release $env:TAG already exists - re-uploading files to it"
+            gh release upload $env:TAG @files --clobber
+          } else {
+            gh release create $env:TAG @files --draft --title "Yibra $env:TAG" --generate-notes
+          }
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      # Retries a few times in case GitHub's asset list lags behind the upload.
       - name: Verify draft has all update files
         shell: pwsh
         run: |
           $required = @('Yibra-Setup.exe', 'Yibra-Setup.exe.blockmap', 'latest.yml')
-          $assets = (gh release view $env:TAG --json assets | ConvertFrom-Json).assets
+          for ($i = 1; $i -le 6; $i++) {
+            $assets = (gh release view $env:TAG --json assets | ConvertFrom-Json).assets
+            $missing = $required | Where-Object { $_ -notin $assets.name }
+            if (-not $missing) { break }
+            Write-Host "Attempt ${i}: still missing $($missing -join ', ') - waiting 10s"
+            Start-Sleep -Seconds 10
+          }
           $assets | Format-Table name, size, state
-          $missing = $required | Where-Object { $_ -notin $assets.name }
           if ($missing) {
             Write-Error "Release $env:TAG is missing: $($missing -join ', '). Not publishing."
             exit 1
