@@ -11,8 +11,6 @@ How a new version gets from your PC onto everyone's machine.
    - `latest.yml`: the manifest installed apps read to see what's newest
 
    The Action then checks that all three files are attached (retrying for up to a minute), and only then publishes the draft. A missing file turns the job red, so a half-uploaded release never goes live.
-
-   The Action then checks that all three files are attached, and only then publishes the draft. A missing file turns the job red, so a half-uploaded release never goes live.
 3. Every installed Yibra checks `latest.yml` **10 seconds after launch and every 4 hours**. Updates download quietly in the background.
 4. When the download is done, a Windows toast and a tray item say **"Restart to update (vX)"**.
    - Clicking either one restarts Yibra on the new version.

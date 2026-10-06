@@ -24,14 +24,27 @@
 <body>
   <div class="card">
     <div class="badge">Y</div>
-    <h1>Comms are down, soldier</h1>
-    <p>Can't reach the Yibra server. Check your connection - we'll keep trying every 10 seconds.</p>
+    <h1 id="title">Comms are down, soldier</h1>
+    <p id="msg">Can't reach the Yibra server. Check your connection - we'll keep trying every 10 seconds.</p>
     <button id="retry">Retry now</button>
     <div class="err" id="err"></div>
   </div>
   <script>
-    const err = new URLSearchParams(location.search).get('error');
+    const params = new URLSearchParams(location.search);
+    const err = params.get('error');
     if (err) document.getElementById('err').textContent = err;
+
+    // Same page, different story depending on whose fault it is (v0.3.5).
+    const copy = {
+      server: ['HQ isn\'t answering',
+               'The Yibra server hit a snag - it\'s not your connection. We\'ll keep trying every 10 seconds.'],
+      updating: ['HQ is being upgraded',
+                 'Yibra is updating right now. Hang tight - we\'ll reconnect every 10 seconds until it\'s back.'],
+    }[params.get('kind')];
+    if (copy) {
+      document.getElementById('title').textContent = copy[0];
+      document.getElementById('msg').textContent = copy[1];
+    }
     const retry = () => window.yibraDesktop && window.yibraDesktop.retry();
     document.getElementById('retry').addEventListener('click', retry);
     setInterval(retry, 10000);

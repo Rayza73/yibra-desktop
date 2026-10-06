@@ -172,9 +172,19 @@ function createWindow() {
   mainWindow.webContents.on('did-fail-load', (_e, errorCode, errorDesc, url, isMainFrame) => {
     if (!isMainFrame || errorCode === -3) return; // -3 = aborted (normal on redirects)
     console.warn(`[yibra] load failed (${errorCode} ${errorDesc}) for ${url}`);
-    mainWindow.loadFile(path.join(__dirname, 'offline.html'), {
-      query: { error: `${errorDesc} (${errorCode})` },
-    });
+    showOfflinePage('network', `${errorDesc} (${errorCode})`);
+  });
+
+  // Server reachable but answered with an error page (v0.3.5). A 5xx is a
+  // successful *load* as far as Chromium is concerned, so did-fail-load never
+  // fires and the raw Cloudflare "502 Bad Gateway" page used to fill the
+  // window with no way out (seen 2026-10-03 on /settings/profile). Swap in
+  // the offline page instead; its 10s auto-retry brings Yibra back by itself.
+  mainWindow.webContents.on('did-navigate', (_e, url, httpResponseCode) => {
+    if (httpResponseCode < 500) return;
+    if (originOf(url) !== APP_ORIGIN) return; // e.g. leave Cloudflare Access alone
+    console.warn(`[yibra] server error ${httpResponseCode} for ${url}`);
+    showOfflinePage(httpResponseCode === 503 ? 'updating' : 'server', `HTTP ${httpResponseCode}`);
   });
 
   // Close button hides to tray; real quit comes from the tray menu
@@ -187,6 +197,12 @@ function createWindow() {
   });
 
   mainWindow.on('closed', () => { mainWindow = null; });
+}
+
+// kind: 'network' (can't reach the server), 'server' (5xx), 'updating' (503)
+function showOfflinePage(kind, error) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.loadFile(path.join(__dirname, 'offline.html'), { query: { kind, error } });
 }
 
 function showWindow() {
