@@ -3,3 +3,5 @@ dist/
 out/
 *.log
 Thumbs.db
+# Discord detectable-games dump, used as a one-off lookup (2026-10-07)
+detectable.json

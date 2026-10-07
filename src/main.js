@@ -11,6 +11,7 @@ const {
 const { autoUpdater } = require('electron-updater');
 const path = require('node:path');
 const fs = require('node:fs');
+const { execFile } = require('node:child_process');
 
 // ---------------------------------------------------------------------------
 // Config
@@ -414,6 +415,81 @@ function configureSession() {
 // ---------------------------------------------------------------------------
 ipcMain.handle('yibra:version', () => app.getVersion());
 ipcMain.on('yibra:retry', () => mainWindow?.loadURL(START_URL));
+
+// ---------------------------------------------------------------------------
+// Game detection (v0.4.0)
+// ---------------------------------------------------------------------------
+// The web app sends us the list of detectable games (from the server's
+// config/yibra-games.php). Every 15s we list running processes and match
+// exe names. Changes go back to the web app, which decides what (if
+// anything) the squad gets to see - by default only "playing something",
+// never the name. Nothing here talks to the server directly.
+const GAME_POLL_MS = 15 * 1000;
+let gameByExe = new Map(); // 'tslgame.exe' -> 'PUBG: Battlegrounds'
+let currentGame = null;
+let gamePollTimer = null;
+let gamePollBusy = false;
+
+function fromYibraPage(event) {
+  return originOf(event.senderFrame?.url || event.sender.getURL()) === APP_ORIGIN;
+}
+
+function listProcessNames() {
+  return new Promise((resolve) => {
+    if (process.platform !== 'win32') return resolve(new Set());
+    execFile('tasklist', ['/fo', 'csv', '/nh'], { windowsHide: true, maxBuffer: 8 * 1024 * 1024 }, (err, stdout) => {
+      if (err) return resolve(new Set());
+      const names = new Set();
+      for (const line of stdout.split(/\r?\n/)) {
+        const m = line.match(/^"([^"]+)"/); // first CSV column = image name
+        if (m) names.add(m[1].toLowerCase());
+      }
+      resolve(names);
+    });
+  });
+}
+
+async function pollGames() {
+  if (gamePollBusy || gameByExe.size === 0) return;
+  gamePollBusy = true;
+  try {
+    const running = await listProcessNames();
+    let found = null;
+    for (const [exe, name] of gameByExe) {
+      if (running.has(exe)) { found = name; break; }
+    }
+    if (found !== currentGame) {
+      currentGame = found;
+      console.log(`[yibra] game activity: ${currentGame ?? 'none'}`);
+      mainWindow?.webContents.send('yibra:activity', currentGame);
+    }
+  } finally {
+    gamePollBusy = false;
+  }
+}
+
+ipcMain.on('yibra:set-games', (event, list) => {
+  if (!fromYibraPage(event) || !Array.isArray(list)) return;
+  const next = new Map();
+  for (const g of list.slice(0, 500)) {
+    if (typeof g?.name !== 'string' || !Array.isArray(g.exe)) continue;
+    const name = g.name.slice(0, 100);
+    for (const exe of g.exe) {
+      if (typeof exe === 'string' && /^[\w .()+-]{1,100}\.exe$/i.test(exe)) {
+        next.set(exe.toLowerCase(), name);
+      }
+    }
+  }
+  gameByExe = next;
+  if (!gamePollTimer) gamePollTimer = setInterval(pollGames, GAME_POLL_MS);
+  pollGames();
+});
+
+// A (re)loaded page asks for the current state straight away.
+ipcMain.on('yibra:activity-subscribe', (event) => {
+  if (!fromYibraPage(event)) return;
+  event.sender.send('yibra:activity', currentGame);
+});
 
 // ---------------------------------------------------------------------------
 // App lifecycle
