@@ -16,7 +16,7 @@ const { execFile } = require('node:child_process');
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
-const LIVE_URL = 'https://yibra.tuulu.co.za/dashboard';
+const LIVE_URL = 'https://yibra.chat/dashboard';
 const DEV_URL = 'https://yibra-dev.tuulu.co.za/dashboard';
 
 const USE_DEV = process.argv.includes('--yibra-dev');
@@ -28,6 +28,26 @@ const APP_HOST = new URL(START_URL).host;
 // bounces through *.cloudflareaccess.com, so that has to stay in-app too.
 const IN_APP_HOSTS = [APP_HOST];
 const IN_APP_HOST_SUFFIXES = ['.cloudflareaccess.com'];
+
+// Sign-in pages we let the window navigate TO (v0.4.1, Twitch "Live on
+// Twitch"). Settings -> Profile -> Connect Twitch is an OAuth round trip:
+// Yibra -> Twitch consent/login -> back to Yibra's /twitch/callback. If those
+// Twitch pages were bounced to the default browser (the old behaviour for any
+// non-Yibra URL), the callback would land in Chrome, where this window's
+// Yibra session doesn't exist, and the connect would fail.
+// Same-window navigation only: links that open a NEW window (like the purple
+// "Live on Twitch" link, target=_blank) still go to the default browser via
+// setWindowOpenHandler below, so streams never load inside Yibra.
+const SIGN_IN_HOSTS = ['id.twitch.tv', 'www.twitch.tv', 'passport.twitch.tv'];
+
+function isSignInUrl(url) {
+  try {
+    const u = new URL(url);
+    return u.protocol === 'https:' && SIGN_IN_HOSTS.includes(u.host);
+  } catch {
+    return false;
+  }
+}
 
 // Permissions the Yibra origin gets without nagging.
 const ALLOWED_PERMISSIONS = new Set([
@@ -163,7 +183,7 @@ function createWindow() {
   });
 
   mainWindow.webContents.on('will-navigate', (event, url) => {
-    if (!isInAppUrl(url)) {
+    if (!isInAppUrl(url) && !isSignInUrl(url)) {
       event.preventDefault();
       openExternalSafely(url);
     }

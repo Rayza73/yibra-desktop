@@ -1,12 +1,12 @@
 # Yibra Desktop
 
-Electron shell for [Yibra](https://yibra.tuulu.co.za), the squad voice app. It loads the live web app and adds the OS-level extras a browser tab can't do.
+Electron shell for [Yibra](https://yibra.chat), the squad voice app. It loads the live web app and adds the OS-level extras a browser tab can't do.
 
 **Download:** [Yibra-Setup.exe](https://github.com/Rayza73/yibra-desktop/releases/latest/download/Yibra-Setup.exe) (latest release)
 
 ## What it does
 
-- Loads `https://yibra.tuulu.co.za/dashboard` (or the dev site with `--yibra-dev`)
+- Loads `https://yibra.chat/dashboard` (or the dev site with `--yibra-dev`)
 - **System tray**: the close button hides the window to the tray, left-click the tray icon to toggle it, and right-click for Open / Reload / DevTools / Quit
 - **Global hotkey** `Ctrl+Shift+Y` shows or hides Yibra from anywhere, even mid-game
 - **Single instance**: launching it a second time focuses the running window
